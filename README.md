@@ -145,6 +145,14 @@ npm test        # 네트워크·계정·크레딧 없이 도는 단위 테스트
 
 구조: `src/api.js`(HTTP), `src/auth.js`(로그인·갱신), `src/models.js`(모델·견적), `src/media.js`(첨부 검사), `src/video.js`(영상), `src/tts.js`(음성), `src/cli.js`(명령).
 
+### 배포
+
+`v*` 태그를 푸시하면 `.github/workflows/publish.yml`이 테스트 후 npm에 배포합니다. 저장소 시크릿에 `NPM_TOKEN`이 필요합니다.
+
+```bash
+npm version patch && git push --follow-tags
+```
+
 ## 라이선스
 
 MIT. Vrew 및 관련 상표는 VoyagerX의 자산입니다.
