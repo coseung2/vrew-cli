@@ -20,8 +20,15 @@ import { buildPlan, describePlan, submitGeneration, pollGeneration, processUploa
 import { fetchVoiceCatalog, voiceList, selectVoice, quoteTTS, makeTTS, waitTTS, writeAudio } from "./tts.js";
 import { c, confirm, download, printTable, out, progress, timestamp, writeReceipt, updateReceipt } from "./util.js";
 
-const BOOLEAN = new Set([
-  "json",
+// node:sqlite(앱 쿠키 읽기)의 실험 기능 경고만 조용히 넘긴다.
+const emitWarning = process.emitWarning.bind(process);
+process.emitWarning = (warning, ...rest) => {
+  const message = typeof warning === "string" ? warning : warning?.message ?? "";
+  if (/SQLite is an experimental feature/i.test(message)) return;
+  return emitWarning(warning, ...rest);
+};
+
+const BOOLEAN = new Set([  "json",
   "yes",
   "dry-run",
   "no-enhance",
