@@ -1,0 +1,20 @@
+{
+  "name": "vrew-cli",
+  "version": "0.1.0",
+  "description": "Unofficial headless CLI for Vrew (브루) AI video and TTS — no browser, no desktop app required at run time.",
+  "type": "module",
+  "bin": { "vrew": "./bin/vrew.js" },
+  "exports": { ".": "./src/cli.js" },
+  "files": ["bin", "src", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint": "node --check bin/vrew.js && node --check src/cli.js"
+  },
+  "keywords": ["vrew", "bru", "브루", "ai-video", "tts", "cli", "i2v", "r2v"],
+  "license": "MIT",
+  "author": "coseung2",
+  "repository": { "type": "git", "url": "git+https://github.com/coseung2/vrew-cli.git" },
+  "bugs": { "url": "https://github.com/coseung2/vrew-cli/issues" },
+  "homepage": "https://github.com/coseung2/vrew-cli#readme"
+}

@@ -1,0 +1,8 @@
+node_modules/
+.tmp/
+*.mp4
+*.mp3
+*.request.json
+*.result.json
+*.log
+.DS_Store
