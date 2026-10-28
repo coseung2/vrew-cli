@@ -139,6 +139,27 @@ export async function loginWithAppCookie() {
   return { cookie: "VREW_RTK=" + cookies.VREW_RTK, identity: desktopDeviceIdentity() };
 }
 
+export async function refreshWithCookie(cookie, identity = desktopDeviceIdentity()) {
+  const { response, json } = await post(
+    "/auth/v2/refresh-token",
+    {
+      clientType: CLIENT_TYPE,
+      deviceId: identity.deviceId,
+      deviceName: identity.deviceName,
+      machineId: identity.machineId,
+      language: "ko",
+      refreshFor: "auto_sign_in",
+      windowId: 1,
+      windowCount: 1,
+      clientRequestedAt: new Date().toISOString(),
+    },
+    { cookie },
+  );
+  const token = json?.session?.idToken;
+  if (!token) throw new Error("세션 갱신 응답에 idToken이 없습니다.");
+  return { idToken: token, cookie: rotateCookie(response.headers, cookie) };
+}
+
 export async function refreshSession({ refreshFor = "refresh_token" } = {}) {
   const cfg = loadConfig();
   const cookie = readRefreshCookie(cfg);

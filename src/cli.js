@@ -5,15 +5,17 @@ import { CLIENT_TYPE, get, post } from "./api.js";
 import {
   getToken,
   verifyToken,
-  loginExisting,
   loginWithAppCookie,
   signInWithPassword,
   saveSession,
   logout,
   jwtUid,
   jwtExp,
-  tokenIsValid,
+  apiDeviceIdentity,
+  desktopDeviceIdentity,
+  refreshWithCookie,
 } from "./auth.js";
+import { browserLogin } from "./browser-login.js";
 import { CONFIG_PATH, loadConfig } from "./config.js";
 import { fetchModels, pickModel, videoModels } from "./models.js";
 import { buildPlan, describePlan, submitGeneration, pollGeneration, processUpload } from "./video.js";
@@ -35,6 +37,7 @@ const BOOLEAN = new Set([  "json",
   "no-audio",
   "archive",
   "import-app-cookie",
+  "keep-browser",
   "help",
   "version",
 ]);
@@ -129,33 +132,53 @@ async function cmdLogin(args) {
     const user = await verifyToken(refreshed);
     await saveSession({ ...session, user, idToken: refreshed, source: "app-cookie" });
     result = { ok: true, source: "app-cookie", account: user.email };
+  } else if (args.cookie) {
+    // 브라우저 없이 세션 쿠키만 넘기는 경로(수동 복구용).
+    const user = await finishCookieLogin(args.cookie.trim().replace(/^VREW_RTK=/, ""), args.account);
+    result = { ok: true, source: "cookie", account: user.email };
   } else {
-    try {
-      const session = await loginWithAppCookie();
-      await saveSession({ ...session, user: {}, source: "app-cookie" });
-      const refreshed = await getToken({ force: true });
-      const user = await verifyToken(refreshed);
-      await saveSession({ ...session, user, idToken: refreshed, source: "app-cookie" });
-      result = { ok: true, source: "app-cookie", account: user.email };
-    } catch (error) {
-      const fallback = await loginExisting().catch(() => null);
-      if (!fallback) {
-        throw new Error(
-          [
-            String(error.message || error),
-            "",
-            "다음 중 하나로 로그인하세요:",
-            "  vrew login --import-app-cookie   (Vrew 앱을 종료한 뒤 세션 가져오기)",
-            "  vrew login --email <이메일>       (비밀번호 입력)",
-          ].join("\n"),
-        );
-      }
-      result = { ok: true, source: "existing", account: fallback.user.email };
+    if (!args.json) {
+      process.stderr.write(c.bold("브라우저에서 Vrew 로그인을 완료해 주세요.") + "\n");
+      process.stderr.write(c.dim("  창이 자동으로 열립니다. 로그인이 확인되면 이 명령이 알아서 끝납니다.\n\n"));
     }
+    const { cookie } = await browserLogin({
+      onPrompt: ({ url }) => {
+        if (args.json) return;
+        process.stderr.write(c.dim(`  안내 링크: ${url}\n`));
+      },
+      timeoutMs: Number(args.timeout ?? 300) * 1000,
+      keepOpen: Boolean(args["keep-browser"]),
+    });
+    const user = await finishCookieLogin(cookie.replace(/^VREW_RTK=/, ""), args.account);
+    result = { ok: true, source: "browser", account: user.email };
   }
   if (args.json) return out({ ...result, config: CONFIG_PATH });
   process.stdout.write(c.green("로그인 완료") + ` → ${result.account} (${result.source})\n`);
   process.stdout.write(c.dim(`  세션 저장: ${CONFIG_PATH}\n`));
+}
+
+// 쿠키를 세션으로 바꿔 저장한다. 웹에서 발급된 쿠키일 수 있으므로 기기 식별자를 바꿔 가며 시도한다.
+async function finishCookieLogin(rawCookie, account) {
+  const cfg = loadConfig();
+  const cookie = "VREW_RTK=" + rawCookie;
+  const candidates = [desktopDeviceIdentity(), apiDeviceIdentity(cfg.cid || crypto.randomUUID())];
+  let identity = candidates[0];
+  let token = null;
+  for (const candidate of candidates) {
+    try {
+      const refreshed = await refreshWithCookie(cookie, candidate);
+      token = refreshed.idToken;
+      identity = candidate;
+      break;
+    } catch {}
+  }
+  if (!token) throw new Error("세션 쿠키로 로그인하지 못했습니다. `vrew login`을 다시 실행해 주세요.");
+  const user = await verifyToken(token);
+  if (account && String(user.email).toLowerCase() !== String(account).toLowerCase()) {
+    throw new Error(`로그인 계정이 --account(${account})와 다릅니다: ${user.email}`);
+  }
+  await saveSession({ cookie, identity, user, idToken: token, source: "browser" });
+  return user;
 }
 
 async function cmdWhoami(args) {
@@ -397,7 +420,10 @@ async function cmdTts(args) {
 const HELP = `vrew — Vrew(브루) 영상·TTS CLI (앱·브라우저 없이 실행)
 
 사용법
-  vrew login [--import-app-cookie | --email <이메일> [--password <비번>]]
+  vrew login                      브라우저를 열어 Vrew 로그인 → 자동으로 세션 저장
+  vrew login --import-app-cookie   설치된 Vrew 앱 세션 가져오기 (앱 종료 필요)
+  vrew login --email <이메일>      이메일·비밀번호로 로그인
+  vrew login --cookie <VREW_RTK>   세션 쿠키 직접 입력 (수동 복구)
   vrew logout
   vrew whoami
   vrew models
@@ -407,6 +433,11 @@ const HELP = `vrew — Vrew(브루) 영상·TTS CLI (앱·브라우저 없이 �
   vrew tts voices [--lang ko-KR] [--voice <일부>]
   vrew tts gen --voice <id> --text "문장" --out a.mp3 [--dry-run] [--yes --max-credits N]
   vrew tts status --out a.mp3
+
+login 옵션
+  --account <이메일>   로그인한 계정이 다르면 실패 처리
+  --timeout <초>       브라우저 로그인 대기 시간 (기본 300)
+  --keep-browser       로그인 후 브라우저 창을 닫지 않음
 
 gen 옵션
   --model <id>            모델 (vrew models)

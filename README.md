@@ -27,20 +27,29 @@ npm link
 
 ## 로그인
 
-세션은 `~/.vrew/config.json`에만 저장되며(0600), 비밀번호는 저장하지 않습니다.
-
 ```bash
-# 1) Vrew 데스크톱 앱 세션 가져오기 (Windows, 앱은 종료 상태여야 함)
-vrew login --import-app-cookie
-
-# 2) 이메일·비밀번호 (모든 OS)
-vrew login --email you@example.com
-
-# 3) 이미 저장된 세션 갱신
 vrew login
 ```
 
-Google/Apple 로그인으로 만든 계정은 1번을 쓰세요. 앱이 실행 중이면 쿠키 DB가 잠겨 있어 가져올 수 없습니다.
+Chrome 또는 Edge 창이 열리고 Vrew 로그인 페이지가 뜹니다. Google 등으로 로그인하면, CLI가 그 세션을 읽어 저장하고 창을 닫습니다. 링크를 직접 열어야 하면 터미널에 표시되는 안내 URL을 브라우저에 붙여 넣어도 됩니다.
+
+- 브라우저 프로필은 `~/.vrew/browser-profile`에 보관되어 다음 로그인 때 Google 세션이 재사용됩니다.
+- 세션은 `~/.vrew/config.json`(0600)에만 저장하며 비밀번호는 저장하지 않습니다.
+
+다른 경로:
+
+```bash
+# 이메일·비밀번호 (터미널에서 비밀번호 입력)
+vrew login --email you@example.com
+
+# 이미 로그인된 Vrew 데스크톱 앱 세션 가져오기 (Windows, 앱 종료 상태)
+vrew login --import-app-cookie
+
+# 세션 쿠키만 직접 넣기 (수동 복구)
+vrew login --cookie <VREW_RTK 값>
+```
+
+옵션: `--account <이메일>`(다른 계정이면 실패), `--timeout <초>`(기본 300), `--keep-browser`(로그인 후 창 유지).
 
 ```bash
 vrew whoami
