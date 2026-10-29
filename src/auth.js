@@ -140,24 +140,44 @@ export async function loginWithAppCookie() {
 }
 
 export async function refreshWithCookie(cookie, identity = desktopDeviceIdentity()) {
-  const { response, json } = await post(
-    "/auth/v2/refresh-token",
-    {
-      clientType: CLIENT_TYPE,
-      deviceId: identity.deviceId,
-      deviceName: identity.deviceName,
-      machineId: identity.machineId,
-      language: "ko",
-      refreshFor: "auto_sign_in",
-      windowId: 1,
-      windowCount: 1,
-      clientRequestedAt: new Date().toISOString(),
-    },
-    { cookie },
-  );
-  const token = json?.session?.idToken;
-  if (!token) throw new Error("세션 갱신 응답에 idToken이 없습니다.");
-  return { idToken: token, cookie: rotateCookie(response.headers, cookie) };
+  try {
+    const { response, json } = await post(
+      "/auth/v2/refresh-token",
+      {
+        clientType: CLIENT_TYPE,
+        deviceId: identity.deviceId,
+        deviceName: identity.deviceName,
+        machineId: identity.machineId,
+        language: "ko",
+        refreshFor: "auto_sign_in",
+        windowId: 1,
+        windowCount: 1,
+        clientRequestedAt: new Date().toISOString(),
+      },
+      { cookie },
+    );
+    const token = json?.session?.idToken;
+    if (!token) {
+      throw new ApiError("세션 갱신 응답에 idToken이 없습니다.", {
+        code: json?.result === "error" ? "SERVER_REJECTED" : "MISSING_TOKEN",
+        status: response.status,
+      });
+    }
+    return { idToken: token, cookie: rotateCookie(response.headers, cookie) };
+  } catch (error) {
+    // 서버 본문과 원본 오류 메시지는 쿠키·토큰을 포함할 수 있어 출력하지 않는다.
+    const known = ["AUTH", "SESSION_ENDED", "SERVER_REJECTED", "MISSING_TOKEN"];
+    const code = known.includes(error.code) ? error.code
+      : error.name === "TimeoutError" ? "TIMEOUT"
+      : error instanceof ApiError ? "HTTP_RESPONSE" : "NETWORK";
+    const status = Number.isInteger(error.status) ? error.status : undefined;
+    const networkCodes = ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID"];
+    const causes = [error, error.cause, ...(Array.isArray(error.cause?.errors) ? error.cause.errors : [])];
+    const details = [...new Set(causes.map((cause) => cause?.code).filter((value) => networkCodes.includes(value)))];
+    if (error.cause?.message === "unexpected redirect") details.push("REDIRECT_BLOCKED");
+    const detail = details.length ? ` [${details.join(", ")}]` : "";
+    throw new ApiError(`세션 갱신 실패: ${code}${detail}${status === undefined ? "" : ` (HTTP ${status})`}`, { code, status });
+  }
 }
 
 export async function refreshSession({ refreshFor = "refresh_token" } = {}) {

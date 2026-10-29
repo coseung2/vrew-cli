@@ -1,14 +1,23 @@
 # vrew-cli
 
-Unofficial headless CLI for **Vrew (브루)** — AI video generation (text→video, image→video, reference→video) and TTS, straight from the terminal.
+**Vrew(브루)의 AI 영상 생성과 음성 합성(TTS)을 터미널에서 사용하는 비공식 CLI입니다.** 텍스트·이미지·참조 미디어로 영상을 만들고, 원고를 음성으로 변환할 수 있습니다.
 
-No desktop app and no browser automation are needed at run time. The CLI talks to Vrew's own API with your own account session.
+## 목적
 
-> **Not affiliated with VoyagerX.** This is an unofficial client for personal automation. The API is internal and may change without notice. Use only with your own account, and check Vrew's terms before automating.
+반복되는 영상·음성 제작 작업을 명령어와 스크립트로 실행하기 위한 도구입니다. 자신의 Vrew 계정으로 로그인하여 모델을 조회하고, 생성 전 예상 사용량을 확인한 뒤 결과 파일을 내려받습니다.
+
+- **영상 생성:** 텍스트→영상, 이미지→영상, 참조 이미지·영상·오디오 기반 생성
+- **음성 합성:** 한국어 등 지원 언어의 목소리 조회 및 텍스트 파일을 MP3로 변환
+- **자동화:** JSON 출력, 생성 요청 상태 조회, 중단된 요청의 결과 회수
+- **사용량 제어:** `--dry-run` 사전 확인과 `--max-credits` 상한 지정
+
+일반 브라우저 로그인에는 Chrome 또는 Edge를 사용합니다. 로그인 후 영상·음성 생성은 저장된 계정 세션으로 Vrew API를 호출하므로 데스크톱 앱이나 브라우저 자동화가 필요하지 않습니다.
+
+> **VoyagerX와 제휴하거나 공식 지원받는 도구가 아닙니다.** 개인 자동화를 위한 비공식 클라이언트이며, 내부 API는 예고 없이 바뀔 수 있습니다. 반드시 본인 계정만 사용하고 자동화 전에 Vrew 이용약관을 확인하세요. 구독·사용량 제한을 우회하는 도구가 아닙니다.
 
 ## 요구 사항
 
-- Node.js **20+** (Node 22.5+ 권장 — 앱 쿠키 가져오기에 내장 SQLite 사용)
+- Node.js **20+**. **Windows에서는 24.5 이상 권장** — 시스템의 신뢰된 인증서를 함께 사용합니다. 앱 쿠키 가져오기는 내장 SQLite가 있는 Node 22.5 이상이 필요합니다.
 - `ffprobe` (선택) — 참조 영상의 길이·해상도 검사. 없으면 경고 후 진행
 
 ## 설치
@@ -24,6 +33,39 @@ git clone https://github.com/coseung2/vrew-cli.git
 cd vrew-cli
 npm link
 ```
+
+`npm link`는 클론한 소스를 전역 `vrew` 명령에 연결합니다. 이 방식으로 설치하면 저장소의 수정 사항이 바로 반영됩니다. 아래 명령은 Windows PowerShell에서도 사용할 수 있습니다.
+
+## 빠른 시작
+
+```bash
+# 1. 브라우저에서 본인 계정으로 로그인
+vrew login
+
+# 2. 로그인 계정과 사용량 확인
+vrew whoami
+
+# 3. 지원 모델 확인
+vrew models
+
+# 4. 서버에 생성 요청을 보내지 않고 영상 생성 계획·예상 크레딧 확인
+vrew gen --prompt "고요한 연못 위 종이배" --model Seedance_1_Pro --dry-run
+```
+
+견적과 계정을 확인한 후에만 실제 생성을 실행하세요. 다음 예시는 예상 크레딧이 20을 넘으면 중단합니다. 모델 요율과 사용 가능 여부는 변경될 수 있습니다.
+
+```bash
+vrew gen --prompt "고요한 연못 위 종이배" --model Seedance_1_Pro --out paper-boat.mp4 --yes --max-credits 20
+```
+
+음성을 만들 때는 먼저 목소리 목록을 확인하고, 원고 파일로 사전 확인합니다.
+
+```bash
+vrew tts voices --lang ko-KR
+vrew tts gen --voice vos-male28 --text-file script.txt --out narration.mp3 --dry-run
+```
+
+`script.txt`는 사용자가 준비한 원고 파일입니다. `--dry-run`은 결과 영상을 만들거나 MP3를 생성하지 않습니다. TTS의 실제 사용량은 계정의 월 글자 한도에서 차감됩니다.
 
 ## 로그인
 
@@ -142,6 +184,8 @@ vrew tts status --out a.mp3                 # 끊긴 요청 회수
 | --- | --- |
 | `Vrew 앱이 실행 중입니다` | 앱을 완전히 종료한 뒤 `vrew login --import-app-cookie` |
 | `세션 갱신 실패` / 401 | `vrew login`으로 다시 로그인 |
+| `NETWORK [SELF_SIGNED_CERT_IN_CHAIN]` | Windows에서는 Node 24.5+ 권장: CLI가 시스템의 신뢰된 CA를 함께 사용합니다. 계속 실패하면 조직의 인증서·프록시 설정을 확인하세요. TLS 검증은 끄지 마세요. |
+| `NETWORK [ENOTFOUND]` / `[ETIMEDOUT]` | DNS·인터넷·프록시 연결을 확인하세요. |
 | `이 모델은 'reference' 입력을 지원하지 않습니다` | `vrew models`의 입력 열 확인 |
 | `Unsupported or oversized GenVideo input file` | 그 모델이 해당 첨부 업로드를 지원하지 않음. 프레임/참조 지원 모델로 변경 |
 | `pricing_changed` | 모델 요율이 바뀜. CLI를 최신 버전으로 |

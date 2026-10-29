@@ -160,19 +160,23 @@ async function cmdLogin(args) {
 // 쿠키를 세션으로 바꿔 저장한다. 웹에서 발급된 쿠키일 수 있으므로 기기 식별자를 바꿔 가며 시도한다.
 async function finishCookieLogin(rawCookie, account) {
   const cfg = loadConfig();
-  const cookie = "VREW_RTK=" + rawCookie;
+  let cookie = "VREW_RTK=" + rawCookie;
   const candidates = [desktopDeviceIdentity(), apiDeviceIdentity(cfg.cid || crypto.randomUUID())];
   let identity = candidates[0];
   let token = null;
-  for (const candidate of candidates) {
+  const failures = [];
+  for (const [index, candidate] of candidates.entries()) {
     try {
       const refreshed = await refreshWithCookie(cookie, candidate);
       token = refreshed.idToken;
+      cookie = refreshed.cookie;
       identity = candidate;
       break;
-    } catch {}
+    } catch (error) {
+      failures.push(`${index === 0 ? "desktop" : "web"} 식별자: ${error.message}`);
+    }
   }
-  if (!token) throw new Error("세션 쿠키로 로그인하지 못했습니다. `vrew login`을 다시 실행해 주세요.");
+  if (!token) throw new Error(`세션 쿠키로 로그인하지 못했습니다. ${failures.join("; ")}. 브라우저의 Vrew 로그인 상태를 확인하고 다시 시도하세요.`);
   const user = await verifyToken(token);
   if (account && String(user.email).toLowerCase() !== String(account).toLowerCase()) {
     throw new Error(`로그인 계정이 --account(${account})와 다릅니다: ${user.email}`);
