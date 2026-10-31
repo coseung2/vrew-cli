@@ -19,7 +19,7 @@ import { browserLogin } from "./browser-login.js";
 import { CONFIG_PATH, loadConfig } from "./config.js";
 import { fetchModels, pickModel, videoModels } from "./models.js";
 import { buildPlan, describePlan, submitGeneration, pollGeneration, processUpload } from "./video.js";
-import { fetchVoiceCatalog, voiceList, selectVoice, quoteTTS, makeTTS, waitTTS, writeAudio } from "./tts.js";
+import { fetchVoiceCatalog, voiceList, selectVoice, quoteTTS, resolveVoiceSetting, makeTTS, waitTTS, writeAudio } from "./tts.js";
 import { c, confirm, download, printTable, out, progress, timestamp, writeReceipt, updateReceipt } from "./util.js";
 
 // node:sqlite(앱 쿠키 읽기)의 실험 기능 경고만 조용히 넘긴다.
@@ -338,12 +338,18 @@ async function cmdTts(args) {
     if (args.lang) voices = voices.filter((voice) => voice.lang === args.lang);
     if (args.voice) voices = voices.filter((voice) => voice.speakerId.toLowerCase().includes(String(args.voice).toLowerCase()));
     if (args.json) return out({ ok: true, pricingPolicyVersion: catalog.pricingPolicyVersion, voices });
+    if (args.provider) voices = voices.filter((voice) => voice.provider === args.provider);
     printTable(
-      voices.slice(0, 200).map((voice) => ({
+      voices.map((voice) => ({
         provider: voice.provider,
         lang: voice.lang,
         speakerId: voice.speakerId,
+        이름: voice.name ?? "-",
         성별: voice.gender ?? "-",
+        나이: voice.age ?? "-",
+        감정: (voice.emotions ?? []).join(",") || "-",
+        연기: (voice.actingOptions ?? []).join(",") || "-",
+        태그: [...new Set(voice.tags ?? [])].join(",") || "-",
         크레딧: String(voice.creditsPer100Chars ?? "-"),
       })),
     );
@@ -380,12 +386,14 @@ async function cmdTts(args) {
   const catalog = await fetchVoiceCatalog();
   const voice = selectVoice(catalog, args.voice, args.lang ?? "ko-KR");
   const estimate = quoteTTS(text, voice);
+  const setting = resolveVoiceSetting(voice, args);
   const record = {
     state: "prepared",
     createdAt: new Date().toISOString(),
     voice: voice.speakerId,
     provider: voice.provider,
     lang: voice.lang,
+    setting,
     characters: text.length,
     estimatedCredits: estimate,
     textSha256: crypto.createHash("sha256").update(text).digest("hex"),
@@ -401,7 +409,7 @@ async function cmdTts(args) {
   const cfg = loadConfig();
   if (!cfg.uid || cfg.uid !== jwtUid(token)) throw new Error("저장된 계정과 토큰 계정이 다릅니다. `vrew login`을 다시 실행하세요.");
   writeReceipt(receipt, record);
-  const made = await makeTTS({ token, voice, text, pricingPolicyVersion: catalog.pricingPolicyVersion, expectedCredits: estimate });
+  const made = await makeTTS({ token, voice, text, setting, pricingPolicyVersion: catalog.pricingPolicyVersion, expectedCredits: estimate });
   updateReceipt(receipt, { ...record, state: "accepted", reqId: made.reqId, appliedPricing: made.appliedPricing });
 
   const { bytes, timestamps } = await waitTTS(made.reqId, token);
@@ -434,8 +442,10 @@ const HELP = `vrew — Vrew(브루) 영상·TTS CLI (앱·브라우저 없이 �
   vrew gen --prompt "설명" [--out a.mp4] [옵션]
   vrew status --req-id <id> [--out a.mp4]
   vrew credits
-  vrew tts voices [--lang ko-KR] [--voice <일부>]
+  vrew tts voices [--lang ko-KR] [--provider typecast] [--voice <일부>]
   vrew tts gen --voice <id> --text "문장" --out a.mp3 [--dry-run] [--yes --max-credits N]
+      [--emotion <감정>] [--intensity <강도>] [--acting <연기>] [--tts-version <버전>] [--speed <n>] [--pitch <n>]
+      (감정·연기·버전은 목소리마다 다르며 tts voices 표에 나온 값만 받습니다)
   vrew tts status --out a.mp3
 
 login 옵션

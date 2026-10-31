@@ -33,7 +33,36 @@ export function quoteTTS(text, voice) {
   return Math.ceil(text.length / 100) * voice.creditsPer100Chars;
 }
 
-export async function makeTTS({ token, voice, text, pricingPolicyVersion, expectedCredits }) {
+// Per-voice delivery settings. Defaults follow the app: each voice's own version, "auto" acting when
+// offered, "neutral" emotion when offered. Explicit values must be ones the voice lists.
+export function resolveVoiceSetting(voice, opts = {}) {
+  const pick = (value, allowed, fallback, label) => {
+    if (value === undefined) return fallback;
+    if (allowed?.length && !allowed.includes(value)) {
+      throw new Error(`${voice.speakerId}의 ${label} 값은 ${allowed.join(", ")} 중 하나여야 합니다: ${value}`);
+    }
+    return value;
+  };
+  const num = (value, label) => {
+    if (value === undefined) return 0;
+    const n = Number(value);
+    if (!Number.isFinite(n)) throw new Error(`${label}은 숫자여야 합니다: ${value}`);
+    return n;
+  };
+  const emotions = voice.emotions ?? [];
+  const acting = voice.actingOptions ?? [];
+  return {
+    emotion: pick(opts.emotion, emotions, emotions.includes("neutral") || !emotions.length ? "neutral" : emotions[0], "감정"),
+    emotionIntensity: opts.intensity === undefined ? 1 : num(opts.intensity, "감정 강도"),
+    acting: pick(opts.acting, acting, acting.includes("auto") || !acting.length ? "auto" : acting[0], "연기"),
+    version: pick(opts["tts-version"], voice.versions, voice.versions?.[0] ?? "v1", "버전"),
+    speed: num(opts.speed, "속도"),
+    pitch: num(opts.pitch, "높낮이"),
+    volume: num(opts.volume, "음량"),
+  };
+}
+
+export async function makeTTS({ token, voice, text, setting, pricingPolicyVersion, expectedCredits }) {
   const cfg = loadConfig();
   const uid = jwtUid(token);
   if (!cfg.cid) throw new Error("기기 식별자(cid)가 없습니다. `vrew login`을 다시 실행하세요.");
@@ -45,13 +74,7 @@ export async function makeTTS({ token, voice, text, pricingPolicyVersion, expect
       {
         text,
         textAspectLang: voice.lang,
-        volume: 0,
-        speed: 0,
-        pitch: 0,
-        emotion: "neutral",
-        emotionIntensity: 1,
-        acting: "auto",
-        version: "v1",
+        ...(setting ?? resolveVoiceSetting(voice)),
       },
     ],
   };
