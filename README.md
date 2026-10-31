@@ -65,6 +65,8 @@ vrew tts voices --lang ko-KR
 vrew tts gen --voice vos-male28 --text-file script.txt --out narration.mp3 --dry-run
 ```
 
+목소리마다 감정·연기 옵션이 다르므로, 고른 목소리의 `감정`·`연기` 열을 확인하고 `--emotion`·`--acting`으로 지정합니다.
+
 `script.txt`는 사용자가 준비한 원고 파일입니다. `--dry-run`은 결과 영상을 만들거나 MP3를 생성하지 않습니다. TTS의 실제 사용량은 계정의 월 글자 한도에서 차감됩니다.
 
 ## 로그인
@@ -156,11 +158,20 @@ vrew status --req-id <id> --out a.mp4
 ## TTS
 
 ```bash
-vrew tts voices --lang ko-KR                # 목소리 목록
+vrew tts voices --lang ko-KR                # 목소리 목록(이름·감정·연기·태그 포함)
 vrew tts gen --voice vos-male28 --text "안녕하세요" --out a.mp3 --dry-run
 vrew tts gen --voice vos-male28 --text-file script.txt --out a.mp3 --yes --max-credits 50
+
+# 목소리가 지원하는 범위 안에서만 지정할 수 있습니다(목록에 없는 값은 거부)
+vrew tts gen --voice vos-male28 --text "안녕하세요" --out a.mp3 \
+  --emotion happy --intensity 1.5 --acting auto --tts-version v1 --speed 1.1 --pitch 0
+vrew tts voices --provider typecast         # 제공자별로 목록 좁히기
 vrew tts status --out a.mp3                 # 끊긴 요청 회수
 ```
+
+- `--emotion`·`--acting`·`--tts-version`은 목소리마다 다릅니다. `tts voices` 표의 `감정`·`연기`·태그를 보고 그 목록에 있는 값만 쓰세요.
+- 지정하지 않으면 앱과 같은 기본값을 씁니다: 그 목소리의 첫 버전, `auto` 연기(있을 때), `neutral` 감정(있을 때, 없으면 첫 감정).
+- `--intensity`(기본 1)·`--speed`·`--pitch`·`--volume`(기본 0)은 숫자입니다.
 
 - 견적은 `ceil(글자수/100) × creditsPer100Chars`의 보수적 상한입니다(실청구액과 다를 수 있음).
 - 원고는 최대 10,000자, 결과는 변환 없이 원본 MP3로 저장합니다.

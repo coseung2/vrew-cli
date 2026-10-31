@@ -4,7 +4,7 @@ import { parseArgs } from "../src/cli.js";
 import { apiDeviceIdentity, jwtClaims, jwtUid, refreshWithCookie } from "../src/auth.js";
 import { dimsFor, durRange, estimateCredits, pickModel } from "../src/models.js";
 import { checkGeometry } from "../src/media.js";
-import { quoteTTS, selectVoice, voiceList } from "../src/tts.js";
+import { quoteTTS, resolveVoiceSetting, selectVoice, voiceList } from "../src/tts.js";
 
 test("parseArgs: 반복 첨부와 불리언, = 표기", () => {
   const args = parseArgs([
@@ -93,6 +93,32 @@ test("quoteTTS: 100자 올림 견적", () => {
   assert.equal(quoteTTS("가".repeat(101), { creditsPer100Chars: 3 }), 6);
   assert.throws(() => quoteTTS("   ", { creditsPer100Chars: 3 }), /1~10000자/);
   assert.throws(() => quoteTTS("가".repeat(10_001), { creditsPer100Chars: 3 }), /1~10000자/);
+});
+
+test("resolveVoiceSetting: 목소리별 기본값", () => {
+  const rich = { speakerId: "rich", emotions: ["neutral", "happy"], actingOptions: ["auto", "talk"], versions: ["v2", "v1"] };
+  assert.deepEqual(resolveVoiceSetting(rich), {
+    emotion: "neutral", emotionIntensity: 1, acting: "auto", version: "v2", speed: 0, pitch: 0, volume: 0,
+  });
+  const bare = { speakerId: "bare", emotions: ["happy", "sad"], actingOptions: ["talk"] };
+  const setting = resolveVoiceSetting(bare);
+  assert.equal(setting.emotion, "happy", "neutral이 없으면 첫 감정");
+  assert.equal(setting.acting, "talk", "auto가 없으면 첫 연기");
+  assert.equal(setting.version, "v1", "versions가 없으면 v1");
+  assert.equal(resolveVoiceSetting({ speakerId: "none" }).emotion, "neutral");
+});
+
+test("resolveVoiceSetting: 지정값 검증과 숫자 변환", () => {
+  const voice = { speakerId: "vos", emotions: ["neutral", "happy"], actingOptions: ["auto"], versions: ["v1"] };
+  const setting = resolveVoiceSetting(voice, { emotion: "happy", acting: "auto", "tts-version": "v1", intensity: "2", speed: "1.2", pitch: "-1" });
+  assert.equal(setting.emotion, "happy");
+  assert.equal(setting.emotionIntensity, 2);
+  assert.equal(setting.speed, 1.2);
+  assert.equal(setting.pitch, -1);
+  assert.equal(setting.volume, 0);
+  assert.throws(() => resolveVoiceSetting(voice, { emotion: "angry" }), /감정/);
+  assert.throws(() => resolveVoiceSetting(voice, { "tts-version": "v9" }), /버전/);
+  assert.throws(() => resolveVoiceSetting(voice, { speed: "빠르게" }), /숫자/);
 });
 
 test("apiDeviceIdentity: 웹앱과 같은 try_ 접두사", () => {
