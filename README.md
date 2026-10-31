@@ -171,7 +171,7 @@ vrew tts status --out a.mp3                 # 끊긴 요청 회수
 
 - `--emotion`·`--acting`·`--tts-version`은 목소리마다 다릅니다. `tts voices` 표의 `감정`·`연기`·태그를 보고 그 목록에 있는 값만 쓰세요.
 - 지정하지 않으면 앱과 같은 기본값을 씁니다: 그 목소리의 첫 버전, `auto` 연기(있을 때), `neutral` 감정(있을 때, 없으면 첫 감정).
-- `--intensity`(기본 1)·`--speed`·`--pitch`·`--volume`(기본 0)은 숫자입니다.
+- `--intensity`(기본 1)·`--speed`·`--pitch`·`--volume`(기본 0)은 숫자입니다. `--speed`는 배속(0.7이면 느리게, 1.3이면 빠르게), `--pitch`는 반음 단위입니다.
 
 - 견적은 `ceil(글자수/100) × creditsPer100Chars`의 보수적 상한입니다(실청구액과 다를 수 있음).
 - 원고는 최대 10,000자, 결과는 변환 없이 원본 MP3로 저장합니다.
