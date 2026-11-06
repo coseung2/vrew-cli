@@ -8,7 +8,7 @@ import { validateAttachment } from "./media.js";
 import { dimsFor, durRange, estimateCredits } from "./models.js";
 import { c, progress, sleep } from "./util.js";
 
-const POLL = { initialDelayMs: 10_000, intervalMs: 5_000, maxAttempts: 60, deadlineMs: 9 * 60_000 };
+const POLL = { initialDelayMs: 10_000, intervalMs: 5_000, maxAttempts: 60, deadlineMs: 9 * 60_000, maxErrors: 12 };
 
 const IMAGE_MIME = ["image/png", "image/jpeg", "image/webp"];
 
@@ -274,9 +274,22 @@ export async function submitGeneration({ token, plan, prompt, args, receiptPath 
 export async function pollGeneration(reqId, token, args) {
   await sleep(POLL.initialDelayMs);
   const deadline = Date.now() + POLL.deadlineMs;
+  let errors = 0;
   for (let i = 0; i < POLL.maxAttempts; i++) {
     if (Date.now() > deadline) return { status: "error", errorMsg: "클라이언트 대기 시간 초과 (서버 작업은 계속될 수 있음)" };
-    const { json } = await get(`/stock/get-genvideo?reqId=${encodeURIComponent(reqId)}`, { token });
+    // A transient error (HTTP 403 "explicit deny", 5xx) used to end the poll; the result's signed URL is issued once,
+    // when the job finishes, and expires 10 minutes later, so a poll that gave up lost the video for good
+    // (2026-11-06, reqId a57cac0f). Keep polling through short error streaks and download as soon as it is done.
+    let json;
+    try {
+      ({ json } = await get(`/stock/get-genvideo?reqId=${encodeURIComponent(reqId)}`, { token }));
+      errors = 0;
+    } catch (error) {
+      if (++errors > POLL.maxErrors) throw error;
+      if (!args.json) process.stderr.write(c.dim("!"));
+      await sleep(POLL.intervalMs);
+      continue;
+    }
     if (json.status === "done" && json.signedUrl) return json;
     if (json.status === "error") return json;
     if (!args.json) process.stderr.write(c.dim("."));
