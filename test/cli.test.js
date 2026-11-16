@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseArgs } from "../src/cli.js";
 import { apiDeviceIdentity, jwtClaims, jwtUid, refreshWithCookie } from "../src/auth.js";
-import { dimsFor, durRange, estimateCredits, pickModel } from "../src/models.js";
+import { dimsFor, durRange, estimateCredits, modeDurRange, modeSpec, nearestRatio, pickModel, sourceDurationError } from "../src/models.js";
+import { buildPlan } from "../src/video.js";
 import { checkGeometry } from "../src/media.js";
 import { quoteTTS, resolveVoiceSetting, selectVoice, voiceList } from "../src/tts.js";
 
@@ -186,4 +187,67 @@ test("jwtUid/jwtClaims: 서명 없이 payload만 해석", () => {
   assert.equal(jwtUid(token), "u1");
   assert.equal(jwtClaims(token).sub, "u1");
   assert.equal(jwtUid("not-a-token"), null);
+});
+
+// ---- 연장(extend) 입력
+
+const EXTEND_MODEL = {
+  id: "M",
+  name: "M",
+  generationOptions: {
+    durationSec: { min: 3, max: 15, defaultValue: 5 },
+    resolution: { values: ["720p"], defaultValue: "720p" },
+    aspectRatio: { values: ["16:9", "9:16"], defaultValue: "16:9" },
+    referenceImages: { maxCount: 10, mimeTypes: ["image/png"], inputModes: ["reference", "edit"] },
+    referenceVideos: { maxCount: 1, mimeTypes: ["video/mp4"], inputModes: ["reference", "edit", "extend"], minDurationSec: 1, maxDurationSec: 15, maxTotalDurationSec: 15 },
+    inputModes: ["frame", "reference", "edit", "extend"],
+    inputModeRules: {
+      edit: { durationSec: { type: "source" }, aspectRatio: { type: "source" } },
+      extend: { aspectRatio: { type: "source" }, durationSecOption: { min: 3, max: 10, defaultValue: 5 } },
+    },
+  },
+  creditPricing: { rates: { "720p": { audioOff: 35, audioOn: 35, videoInput: { audioOff: 40, audioOn: 40 } } } },
+};
+
+test("modeDurRange: 방식별 길이 규칙", () => {
+  assert.deepEqual(modeDurRange(EXTEND_MODEL, "extend"), { min: 3, max: 10, def: 5, values: undefined });
+  assert.equal(modeDurRange(EXTEND_MODEL, "frame").max, 15);
+  assert.deepEqual(modeDurRange(EXTEND_MODEL, "edit", 7.9), { min: 7, max: 7, def: 7, values: undefined, locked: true });
+  // 규칙이 없는 방식은 모델 기본 범위
+  assert.equal(modeDurRange(EXTEND_MODEL, "reference").max, 15);
+});
+
+test("modeSpec: 방식에 따라 첨부 종류를 막는다", () => {
+  const options = EXTEND_MODEL.generationOptions;
+  assert.equal(modeSpec(options, "referenceImages", "extend"), undefined);
+  assert.equal(modeSpec(options, "referenceImages", "reference"), options.referenceImages);
+  assert.equal(modeSpec(options, "referenceVideos", "extend"), options.referenceVideos);
+});
+
+test("nearestRatio: 원본 영상에 가장 가까운 비율", () => {
+  assert.equal(nearestRatio(720, 1280, ["16:9", "9:16"], "16:9"), "9:16");
+  assert.equal(nearestRatio(1920, 1080, ["16:9", "4:3", "1:1"], "16:9"), "16:9");
+  assert.equal(nearestRatio(1000, 1000, ["16:9", "4:3", "1:1"], "16:9"), "1:1");
+  assert.equal(nearestRatio(null, null, ["16:9"], "16:9"), "16:9");
+});
+
+test("sourceDurationError: 원본은 최대 길이보다 1초 이상 짧아야 한다", () => {
+  const spec = { minDurationSec: 1, maxDurationSec: 15 };
+  assert.equal(sourceDurationError(14.9, spec), null);
+  assert.match(sourceDurationError(15.0, spec), /15초 미만/);
+  assert.match(sourceDurationError(0.5, spec), /최소 1초/);
+  assert.equal(sourceDurationError(null, spec), null);
+});
+
+test("buildPlan: 연장 입력은 길이 범위·함께 쓸 수 없는 옵션을 검사한다", () => {
+  const plan = (args) => buildPlan({ model: EXTEND_MODEL, args });
+  assert.throws(() => plan({ extend: "a.mp4", "start-frame": ["s.png"] }), /함께 쓸 수 없습니다/);
+  assert.throws(() => plan({ extend: "a.mp4", "ref-image": ["r.png"] }), /'extend' 입력에서 참조 이미지/);
+  const noExtend = { ...EXTEND_MODEL, generationOptions: { ...EXTEND_MODEL.generationOptions, inputModes: ["frame", "reference"] } };
+  assert.throws(() => buildPlan({ model: noExtend, args: { extend: "a.mp4" } }), /'extend' 입력을 지원하지 않습니다/);
+  // 연장이 아닌 기존 경로는 그대로
+  const frame = plan({ duration: "12" });
+  assert.equal(frame.inputMode, "frame");
+  assert.equal(frame.durationSec, 12);
+  assert.deepEqual(frame.sourceVideo, []);
 });

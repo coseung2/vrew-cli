@@ -5,7 +5,7 @@ import { CLIENT_TYPE } from "./api.js";
 import { apiDeviceIdentity, jwtUid } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { validateAttachment } from "./media.js";
-import { dimsFor, durRange, estimateCredits } from "./models.js";
+import { dimsFor, estimateCredits, modeDurRange, modeSpec, nearestRatio, sourceDurationError } from "./models.js";
 import { c, progress, sleep } from "./util.js";
 
 const POLL = { initialDelayMs: 10_000, intervalMs: 5_000, maxAttempts: 60, deadlineMs: 9 * 60_000, maxErrors: 12 };
@@ -31,22 +31,44 @@ export function buildPlan({ catalog, model, args }) {
   if (options.resolution && !options.resolution.values.includes(resolution)) {
     throw new Error(`이 모델은 ${resolution} 해상도를 지원하지 않습니다. 가능: ${options.resolution.values.join(", ")}`);
   }
-  const range = durRange(model);
-  const supportsDuration = range.min !== undefined;
-  const durationSec = args.duration ? Number(args.duration) : supportsDuration ? range.def : undefined;
-  if (supportsDuration) {
-    const allowed = range.values && range.values.length ? range.values.includes(durationSec) : durationSec >= range.min && durationSec <= range.max;
-    if (!Number.isFinite(durationSec) || durationSec <= 0 || !allowed) {
-      throw new Error(`이 모델의 길이는 ${range.values?.join("/") || `${range.min}~${range.max}`}초입니다.`);
-    }
-  } else if (args.duration) {
-    throw new Error("이 모델은 길이를 직접 지정할 수 없습니다 (고정 길이).");
-  }
   const generateAudio = args.audio === false || args["no-audio"] ? false : true;
 
-  const referenceImages = (args["ref-image"] || []).map((file) => validateAttachment(options.referenceImages, file, "참조 이미지"));
-  const referenceVideos = (args["ref-video"] || []).map((file) => validateAttachment(options.referenceVideos, file, "참조 영상"));
-  const referenceAudios = (args["ref-audio"] || []).map((file) => validateAttachment(options.referenceAudios, file, "참조 오디오"));
+  // 입력 방식: --extend 가 있으면 연장, 참조 첨부가 있으면 reference, 아니면 frame.
+  const refCount = (args["ref-image"] || []).length + (args["ref-video"] || []).length + (args["ref-audio"] || []).length;
+  const inputMode = args.extend ? "extend" : refCount > 0 ? "reference" : "frame";
+  const inputModes = options.inputModes || ["frame"];
+  if (!inputModes.includes(inputMode)) {
+    throw new Error(`이 모델은 '${inputMode}' 입력을 지원하지 않습니다. 가능: ${inputModes.join(", ")}`);
+  }
+  const specOf = (key, kind) => {
+    const spec = modeSpec(options, key, inputMode);
+    if (!spec && options[key]) throw new Error(`이 모델은 '${inputMode}' 입력에서 ${kind} 첨부를 받지 않습니다.`);
+    return spec;
+  };
+
+  // 파일을 읽기 전에, 이 방식에서 받지 않는 첨부 종류부터 거른다.
+  const refSpecs = {
+    image: (args["ref-image"] || []).length ? specOf("referenceImages", "참조 이미지") : undefined,
+    video: (args["ref-video"] || []).length ? specOf("referenceVideos", "참조 영상") : undefined,
+    audio: (args["ref-audio"] || []).length ? specOf("referenceAudios", "참조 오디오") : undefined,
+  };
+
+  // 연장: 원본 영상은 참조 영상 규격으로 검사하고, 요청에서는 referenceVideos 의 첫 항목으로 보낸다.
+  const sourceVideo = [];
+  if (args.extend) {
+    if ((args["start-frame"] || []).length || (args["end-frame"] || []).length) {
+      throw new Error("--extend 는 --start-frame / --end-frame 과 함께 쓸 수 없습니다.");
+    }
+    const spec = specOf("referenceVideos", "원본 영상");
+    const item = validateAttachment(spec, args.extend, "원본 영상");
+    const error = sourceDurationError(item.durationSec, spec);
+    if (error) throw new Error(`원본 영상 ${path.basename(item.file)}: ${Number(item.durationSec).toFixed(1)}초 — ${error}`);
+    sourceVideo.push(item);
+  }
+
+  const referenceImages = (args["ref-image"] || []).map((file) => validateAttachment(refSpecs.image, file, "참조 이미지"));
+  const referenceVideos = (args["ref-video"] || []).map((file) => validateAttachment(refSpecs.video, file, "참조 영상"));
+  const referenceAudios = (args["ref-audio"] || []).map((file) => validateAttachment(refSpecs.audio, file, "참조 오디오"));
   const startFrame = (args["start-frame"] || []).slice(0, 1).map((file) => validateAttachment(startFrameSpec(model), file, "시작 프레임"));
   const endFrame = (args["end-frame"] || []).slice(0, 1).map((file) => validateAttachment(options.endFrameImage, file, "끝 프레임"));
 
@@ -54,38 +76,64 @@ export function buildPlan({ catalog, model, args }) {
   if (options.referenceImages?.maxCount && referenceImages.length > options.referenceImages.maxCount) {
     throw new Error(`참조 이미지는 최대 ${options.referenceImages.maxCount}개입니다.`);
   }
-  if (options.referenceVideos?.maxCount && referenceVideos.length > options.referenceVideos.maxCount) {
-    throw new Error(`참조 영상은 최대 ${options.referenceVideos.maxCount}개입니다.`);
+  // 원본 영상도 참조 영상의 개수·총 길이 한도에 포함된다.
+  const allVideos = [...sourceVideo, ...referenceVideos];
+  if (options.referenceVideos?.maxCount && allVideos.length > options.referenceVideos.maxCount) {
+    throw new Error(
+      `참조 영상은 최대 ${options.referenceVideos.maxCount}개입니다${sourceVideo.length ? " (원본 영상 포함)" : ""}.`,
+    );
   }
   if (options.referenceAudios?.maxCount && referenceAudios.length > options.referenceAudios.maxCount) {
     throw new Error(`참조 오디오는 최대 ${options.referenceAudios.maxCount}개입니다.`);
   }
-  const totalReferenceVideoSec = referenceVideos.reduce((sum, item) => sum + (item.durationSec || 0), 0);
+  const totalReferenceVideoSec = allVideos.reduce((sum, item) => sum + (item.durationSec || 0), 0);
   if (options.referenceVideos?.maxTotalDurationSec && totalReferenceVideoSec > options.referenceVideos.maxTotalDurationSec) {
     throw new Error(`참조 영상 총 길이 ${totalReferenceVideoSec.toFixed(1)}초 — 최대 ${options.referenceVideos.maxTotalDurationSec}초`);
   }
 
-  const hasReferences = referenceImages.length + referenceVideos.length + referenceAudios.length > 0;
-  const inputMode = hasReferences ? "reference" : "frame";
-  const inputModes = options.inputModes || ["frame"];
-  if (!inputModes.includes(inputMode)) {
-    throw new Error(`이 모델은 '${inputMode}' 입력을 지원하지 않습니다. 가능: ${inputModes.join(", ")}`);
+  // 방식별 규칙: 길이 범위와, 원본 영상을 따르는 화면 비율.
+  const rule = options.inputModeRules?.[inputMode] || {};
+  const range = modeDurRange(model, inputMode, sourceVideo[0]?.durationSec);
+  const supportsDuration = range.min !== undefined;
+  const durationSec = args.duration && !range.locked ? Number(args.duration) : supportsDuration ? range.def : undefined;
+  if (supportsDuration) {
+    if (range.locked && args.duration && Number(args.duration) !== range.def) {
+      throw new Error(`'${inputMode}' 입력의 길이는 ${range.def}초로 정해져 있습니다. --duration 을 빼세요.`);
+    }
+    const allowed = range.values && range.values.length ? range.values.includes(durationSec) : durationSec >= range.min && durationSec <= range.max;
+    if (!Number.isFinite(durationSec) || durationSec <= 0 || !allowed) {
+      throw new Error(
+        `이 모델의 ${inputMode === "frame" ? "" : `'${inputMode}' 입력 `}길이는 ${range.values?.join("/") || `${range.min}~${range.max}`}초입니다.`,
+      );
+    }
+  } else if (args.duration) {
+    throw new Error("이 모델은 길이를 직접 지정할 수 없습니다 (고정 길이).");
   }
 
-  const { width, height } = args.width && args.height ? { width: Number(args.width), height: Number(args.height) } : dimsFor(ratio, resolution);
+  let outRatio = ratio;
+  if (sourceVideo.length && rule.aspectRatio?.type === "source") {
+    if (args.ratio) throw new Error("--extend 에서는 원본 영상이 화면 비율을 정합니다. --ratio 를 빼세요.");
+    const source = sourceVideo[0];
+    if ((!source.width || !source.height) && !(args.width && args.height)) {
+      throw new Error("원본 영상의 크기를 읽지 못했습니다. ffprobe 를 설치하거나 --width/--height 를 주세요.");
+    }
+    outRatio = nearestRatio(source.width, source.height, options.aspectRatio?.values, options.aspectRatio?.defaultValue || "16:9");
+  }
+
+  const { width, height } = args.width && args.height ? { width: Number(args.width), height: Number(args.height) } : dimsFor(outRatio, resolution);
   const estimate = estimateCredits(model, {
     durationSec,
     resolution,
     generateAudio,
     archive: Boolean(args.archive),
-    hasVideoInput: referenceVideos.length > 0,
+    hasVideoInput: allVideos.length > 0,
   });
 
   return {
     model,
     modelId: model.id,
     modelName: model.name,
-    ratio,
+    ratio: outRatio,
     resolution,
     width,
     height,
@@ -95,6 +143,7 @@ export function buildPlan({ catalog, model, args }) {
     inputMode,
     startFrame,
     endFrame,
+    sourceVideo,
     referenceImages,
     referenceVideos,
     referenceAudios,
@@ -116,6 +165,7 @@ export function describePlan(plan, prompt) {
   const attachments = [
     ...plan.startFrame.map((item) => `시작 프레임 ${path.basename(item.file)}`),
     ...plan.endFrame.map((item) => `끝 프레임 ${path.basename(item.file)}`),
+    ...(plan.sourceVideo || []).map((item) => `원본 영상 ${path.basename(item.file)}`),
     ...plan.referenceImages.map((item) => `참조 이미지 ${path.basename(item.file)}`),
     ...plan.referenceVideos.map((item) => `참조 영상 ${path.basename(item.file)}`),
     ...plan.referenceAudios.map((item) => `참조 오디오 ${path.basename(item.file)}`),
@@ -215,10 +265,12 @@ export async function submitGeneration({ token, plan, prompt, args, receiptPath 
       plan.referenceImages.map((item) => uploadInput(token, plan.modelId, "reference_image", item)),
     );
   }
-  if (plan.referenceVideos.length) {
-    progress(args, `첨부 업로드: 참조 영상 ${plan.referenceVideos.length}개`);
+  // 연장의 원본 영상은 별도 필드가 없다: reference_video 로 올려 referenceVideos 의 첫 항목으로 보낸다 (앱과 같은 순서).
+  const videos = [...(plan.sourceVideo || []), ...plan.referenceVideos];
+  if (videos.length) {
+    progress(args, `첨부 업로드: ${plan.sourceVideo?.length ? "원본 영상 + " : ""}참조 영상 ${plan.referenceVideos.length}개`);
     generationOptions.referenceVideos = await Promise.all(
-      plan.referenceVideos.map((item) => uploadInput(token, plan.modelId, "reference_video", item)),
+      videos.map((item) => uploadInput(token, plan.modelId, "reference_video", item)),
     );
   }
   if (plan.referenceAudios.length) {

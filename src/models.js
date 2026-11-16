@@ -57,6 +57,63 @@ export function durRange(model) {
   return { min: undefined, max: undefined, def: 5 };
 }
 
+// 입력 방식(inputMode)별 길이 범위. 모델은 inputModeRules[mode] 로 방식마다 규칙을 따로 둔다:
+// durationSecOption(그 방식 전용 범위), durationSec {type:"fixed"|"source"}(고정값 / 원본 영상 길이를 따름).
+export function modeDurRange(model, mode, sourceDurationSec) {
+  const base = durRange(model);
+  const rule = model.generationOptions?.inputModeRules?.[mode];
+  if (!rule || base.min === undefined) return base;
+  const fixed = (value) => ({ min: value, max: value, def: value, values: undefined, locked: true });
+  if (rule.durationSec?.type === "fixed") return fixed(rule.durationSec.value);
+  if (rule.durationSec?.type === "source") {
+    if (sourceDurationSec === undefined || sourceDurationSec === null) return base;
+    if (base.values?.length) {
+      const rounded = Math.round(sourceDurationSec);
+      return fixed(base.values.reduce((best, value) => (Math.abs(value - rounded) < Math.abs(best - rounded) ? value : best), base.def));
+    }
+    return fixed(Math.max(base.min, Math.min(base.max, Math.floor(sourceDurationSec))));
+  }
+  const option = rule.durationSecOption;
+  if (option) {
+    return {
+      min: option.min ?? Math.min(...(option.values || [])),
+      max: option.max ?? Math.max(...(option.values || [])),
+      def: option.defaultValue ?? option.min ?? option.values?.[0],
+      values: option.values,
+    };
+  }
+  return base;
+}
+
+// 첨부 종류별 스펙. 스펙에 inputModes 가 있으면 그 방식에서만 받는다 (예: 연장에서는 참조 이미지 불가).
+export function modeSpec(options, key, mode) {
+  const spec = options?.[key];
+  if (!spec) return undefined;
+  if (spec.inputModes && !spec.inputModes.includes(mode)) return undefined;
+  return spec;
+}
+
+// 원본 영상의 종횡비에 가장 가까운 지원 비율 (로그 거리).
+export function nearestRatio(width, height, values, fallback) {
+  if (!width || !height || !values?.length) return fallback;
+  const target = width / height;
+  const distance = (ratio) => {
+    const [w, h] = ratio.split(":").map(Number);
+    return Math.abs(Math.log(target / (w / h)));
+  };
+  return values.reduce((best, ratio) => (distance(ratio) < distance(best) ? ratio : best), values.includes(fallback) ? fallback : values[0]);
+}
+
+// 편집·연장의 원본 영상은 참조 영상 최대 길이보다 1초 이상 짧아야 한다 (앱과 같은 규칙: floor(길이) <= floor(max) - 1).
+export function sourceDurationError(durationSec, spec) {
+  if (durationSec === undefined || durationSec === null || !spec) return null;
+  if (spec.minDurationSec !== undefined && durationSec < spec.minDurationSec) return `최소 ${spec.minDurationSec}초 필요`;
+  if (spec.maxDurationSec !== undefined && Math.floor(durationSec) > Math.floor(spec.maxDurationSec) - 1) {
+    return `${Math.floor(spec.maxDurationSec)}초 미만이어야 합니다`;
+  }
+  return null;
+}
+
 // 서버 요율표(creditPricing.rates)로 견적을 낸다. 요율을 확인할 수 없으면 실행하지 않는다.
 export function estimateCredits(model, { durationSec, resolution, generateAudio, archive = false, hasVideoInput = false }) {
   const rates = archive ? model.creditPricing?.archiveRates : model.creditPricing?.rates;

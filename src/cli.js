@@ -17,7 +17,7 @@ import {
 } from "./auth.js";
 import { browserLogin } from "./browser-login.js";
 import { CONFIG_PATH, loadConfig } from "./config.js";
-import { fetchModels, pickModel, videoModels } from "./models.js";
+import { fetchModels, modeDurRange, pickModel, videoModels } from "./models.js";
 import { buildPlan, describePlan, submitGeneration, pollGeneration, processUpload } from "./video.js";
 import { fetchVoiceCatalog, voiceList, selectVoice, quoteTTS, resolveVoiceSetting, makeTTS, waitTTS, writeAudio } from "./tts.js";
 import { c, confirm, download, printTable, out, progress, timestamp, writeReceipt, updateReceipt } from "./util.js";
@@ -214,10 +214,18 @@ async function cmdModels(args) {
         해상도: options.resolution ? options.resolution.values.join("/") : "-",
         오디오: options.generateAudio ? "가능" : "-",
         입력: (options.inputModes || []).join(","),
+        연장: (options.inputModes || []).includes("extend") ? extendLabel(model) : "-",
       };
     }),
   );
   process.stdout.write(c.dim("\n--model 에 id 를 그대로 쓰세요.\n"));
+}
+
+// 연장 입력의 이어 만들 길이 범위 (모델마다 다름).
+function extendLabel(model) {
+  const range = modeDurRange(model, "extend");
+  if (range.min === undefined) return "가능";
+  return range.values?.length ? `${range.values.join("/")}초` : `${range.min}~${range.max}초`;
 }
 
 async function cmdCredits(args) {
@@ -461,6 +469,8 @@ gen 옵션
   --ref-image <이미지>    r2v 참조 이미지 (반복 가능)
   --ref-video <영상>      r2v 참조 영상 (반복 가능)
   --ref-audio <오디오>    r2v 참조 오디오 (반복 가능)
+  --extend <영상>         이 영상의 끝에서 이어 생성 (연장). --duration 은 이어 만들 길이,
+                          화면 비율은 원본을 따름. 모델에 따라 --ref-* 를 함께 쓸 수 있음
   --no-audio              생성 오디오 끄기
   --no-enhance            프롬프트 다듬기 생략
   --dry-run               계획·견적만 확인
